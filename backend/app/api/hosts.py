@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from app.models.host import HostManifestModel
 from app.services.host_service import HostService
 
-router = APIRouter(prefix="/hosts", tags=["hosts"])
+router = APIRouter(prefix="/api/hosts", tags=["hosts"])
 service = HostService()
 
 

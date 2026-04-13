@@ -20,9 +20,9 @@ class ApplyConfig(BaseModel):
 class UserModel(BaseModel):
     name: str
     password: Optional[str] = None
-    groups: List[str] = []
+    groups: List[str] = Field(default_factory=list)
     shell: str = "/bin/bash"
-    ssh_keys: List[str] = []
+    ssh_keys: List[str] = Field(default_factory=list)
 
 
 class IdentityModel(BaseModel):
@@ -48,8 +48,8 @@ class ProvisioningModel(BaseModel):
 class AutomationModel(BaseModel):
     repo: GitRepoConfig
     apply: ApplyConfig
-    roles: List[str] = []
-    vars: Dict[str, Any] = {}
+    roles: List[str] = Field(default_factory=list)
+    vars: Dict[str, Any] = Field(default_factory=dict)
 
 
 class HostManifestModel(BaseModel):

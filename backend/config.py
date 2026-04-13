@@ -1,12 +1,13 @@
-import os
+from pydantic_settings import BaseSettings
 
+class Settings(BaseSettings):
+    git_repo_url: str
+    git_branch: str = "main"
+    git_repo_path: str = "/data/repo"
+    git_user_name: str = "InfraWriter"
+    git_user_email: str = "infrawriter@local"
 
-class Settings:
-    git_repo_url = os.getenv("GIT_REPO_URL", "")
-    git_branch = os.getenv("GIT_BRANCH", "main")
-    git_repo_path = os.getenv("GIT_REPO_PATH", "/data/repo")
-    git_user_name = os.getenv("GIT_USERNAME", "main")
-    git_user_email = os.getenv("GIT_USER_EMAIL", "main")
-
+    class Config:
+        env_file = ".env"
 
 settings = Settings()

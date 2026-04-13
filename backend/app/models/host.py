@@ -1,62 +1,43 @@
-from typing import List, Optional, Literal, Dict, Any
-from pydantic import BaseModel, Field, field_validator
-import re
+from fastapi import APIRouter, HTTPException
+from app.models.host import HostManifestModel
+from app.services.host_service import HostService
+
+router = APIRouter(prefix="/hosts", tags=["hosts"])
+service = HostService()
 
 
-MAC_RE = re.compile(r"^[0-9a-f]{2}(-[0-9a-f]{2}){5}$")
+@router.get("")
+def list_hosts():
+    return service.list_hosts()
 
 
-class GitRepoConfig(BaseModel):
-    url: str
-    local_path: str = "/opt/InfraServer"
-    branch: str = "main"
+@router.get("/{host_id}")
+def get_host(host_id: str):
+    host = service.get_host(host_id)
+    if not host:
+        raise HTTPException(status_code=404, detail="Host no encontrado")
+    return host
 
 
-class ApplyConfig(BaseModel):
-    playbook: str = "playbooks/bootstrap.yaml"
-    interval: str = "1h"
+@router.post("", status_code=201)
+def create_host(host: HostManifestModel):
+    try:
+        return service.create_host(host)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
-class UserModel(BaseModel):
-    name: str
-    password: Optional[str] = None
-    groups: List[str] = Field(default_factory=list)
-    shell: str = "/bin/bash"
-    ssh_keys: List[str] = Field(default_factory=list)
+@router.put("/{host_id}")
+def update_host(host_id: str, host: HostManifestModel):
+    try:
+        return service.update_host(host_id, host)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
-class IdentityModel(BaseModel):
-    mac: List[str] = Field(min_length=1)
-
-    @field_validator("mac")
-    @classmethod
-    def validate_mac_list(cls, value: List[str]) -> List[str]:
-        normalized = []
-        for mac in value:
-            mac_norm = mac.lower().replace(":", "-")
-            if not MAC_RE.match(mac_norm):
-                raise ValueError(f"MAC inválida: {mac}")
-            normalized.append(mac_norm)
-        return normalized
-
-
-class ProvisioningModel(BaseModel):
-    distro: Literal["ubuntu", "rhel"]
-    version: str
-
-
-class AutomationModel(BaseModel):
-    repo: GitRepoConfig
-    apply: ApplyConfig
-    roles: List[str] = Field(default_factory=list)
-    vars: Dict[str, Any] = Field(default_factory=dict)
-
-
-class HostManifestModel(BaseModel):
-    kind: Literal["host"] = "host"
-    name: str
-    identity: Optional[IdentityModel] = None
-    profile: str
-    hostname: str
-    provisioning: Optional[ProvisioningModel] = None
-    automation: AutomationModel
+@router.delete("/{host_id}", status_code=204)
+def delete_host(host_id: str):
+    try:
+        service.delete_host(host_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))

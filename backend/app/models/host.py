@@ -1,43 +1,72 @@
-from fastapi import APIRouter, HTTPException
-from app.models.host import HostManifestModel
-from app.services.host_service import HostService
+from typing import Any, Dict, List, Literal, Optional
+import re
 
-router = APIRouter(prefix="/hosts", tags=["hosts"])
-service = HostService()
+from pydantic import BaseModel, Field, field_validator
 
 
-@router.get("")
-def list_hosts():
-    return service.list_hosts()
+MAC_RE = re.compile(r"^[0-9a-f]{2}(-[0-9a-f]{2}){5}$")
 
 
-@router.get("/{host_id}")
-def get_host(host_id: str):
-    host = service.get_host(host_id)
-    if not host:
-        raise HTTPException(status_code=404, detail="Host no encontrado")
-    return host
+def normalize_mac(value: str) -> str:
+    return str(value).strip().lower().replace(":", "-")
 
 
-@router.post("", status_code=201)
-def create_host(host: HostManifestModel):
-    try:
-        return service.create_host(host)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+class GitRepoConfig(BaseModel):
+    url: str
+    local_path: str = "/opt/InfraServer"
+    branch: str = "main"
 
 
-@router.put("/{host_id}")
-def update_host(host_id: str, host: HostManifestModel):
-    try:
-        return service.update_host(host_id, host)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+class ApplyConfig(BaseModel):
+    playbook: str = "playbooks/bootstrap.yaml"
+    interval: str = "1h"
 
 
-@router.delete("/{host_id}", status_code=204)
-def delete_host(host_id: str):
-    try:
-        service.delete_host(host_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+class UserModel(BaseModel):
+    name: str
+    password: Optional[str] = None
+    groups: List[str] = Field(default_factory=list)
+    shell: str = "/bin/bash"
+    ssh_keys: List[str] = Field(default_factory=list)
+
+
+class IdentityModel(BaseModel):
+    mac: List[str] = Field(min_length=1)
+
+    @field_validator("mac")
+    @classmethod
+    def validate_mac_list(cls, value: List[str]) -> List[str]:
+        normalized: List[str] = []
+
+        for mac in value:
+            mac_norm = normalize_mac(mac)
+            if not MAC_RE.match(mac_norm):
+                raise ValueError(f"MAC inválida: {mac}")
+            normalized.append(mac_norm)
+
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("Hay MACs duplicadas dentro del mismo host")
+
+        return normalized
+
+
+class ProvisioningModel(BaseModel):
+    distro: Literal["ubuntu", "rhel", "rocky", "almalinux", "centos"]
+    version: str
+
+
+class AutomationModel(BaseModel):
+    repo: GitRepoConfig
+    apply: ApplyConfig
+    roles: List[str] = Field(default_factory=list)
+    vars: Dict[str, Any] = Field(default_factory=dict)
+
+
+class HostManifestModel(BaseModel):
+    kind: Literal["host"] = "host"
+    name: str
+    identity: Optional[IdentityModel] = None
+    profile: str
+    hostname: str
+    provisioning: Optional[ProvisioningModel] = None
+    automation: AutomationModel

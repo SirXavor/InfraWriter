@@ -76,13 +76,28 @@ class HostService:
                     f"Hay MACs duplicadas con el host '{existing_name}': {repeated}"
                 )
 
+    def _add_id(self, host: dict) -> dict:
+        """
+        Añade el campo 'id' al payload de salida usando la MAC principal.
+        No modifica el YAML en disco; solo la respuesta de la API.
+        """
+        identity = host.get("identity", {})
+
+        if isinstance(identity, dict):
+            macs = identity.get("mac", [])
+            if isinstance(macs, list) and macs:
+                host["id"] = normalize_mac(macs[0])
+
+        return host
+
     def list_hosts(self) -> list[dict]:
         with RepoLock():
             self._ensure_repo()
             result: list[dict] = []
 
             for file_path in list_host_files(self.hosts_dir):
-                result.append(YamlService.load_host(file_path))
+                host = YamlService.load_host(file_path)
+                result.append(self._add_id(host))
 
             return result
 
@@ -92,7 +107,9 @@ class HostService:
             file_path = self._find_host_file_by_any_mac(host_id)
             if not file_path:
                 return None
-            return YamlService.load_host(file_path)
+
+            host = YamlService.load_host(file_path)
+            return self._add_id(host)
 
     def create_host(self, host: HostManifestModel) -> dict:
         with RepoLock():

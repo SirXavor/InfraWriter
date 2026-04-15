@@ -2,18 +2,8 @@ from pathlib import Path
 from typing import Any
 import yaml
 
-
 def normalize_mac(value: str) -> str:
     return str(value).strip().lower().replace(":", "-")
-
-
-def load_yaml_file(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as file_obj:
-        data = yaml.safe_load(file_obj) or {}
-        if not isinstance(data, dict):
-            return {}
-        return data
-
 
 def load_yaml_documents(root_path: Path) -> list[dict[str, Any]]:
     docs: list[dict[str, Any]] = []

@@ -1,5 +1,6 @@
 from pathlib import Path
-from git import Repo, GitCommandError
+
+from git import Repo
 
 
 class GitService:

@@ -48,6 +48,7 @@ export interface HostAutomation {
 }
 
 export interface Host {
+  id?: string;
   kind: HostKind;
   name: string;
   identity?: HostIdentity;

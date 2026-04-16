@@ -1,6 +1,7 @@
 import { useParams } from "react-router-dom";
 import AppShell from "../components/layout/AppShell";
 import { useHost } from "../hooks/useHost";
+import HostEditor from "../components/hosts/HostEditor";
 
 export default function HostEditPage() {
   const { hostId } = useParams();
@@ -12,15 +13,7 @@ export default function HostEditPage() {
 
       {isError && <p>Error cargando host</p>}
 
-      {host && (
-        <>
-          <h1>{host.name}</h1>
-
-          <pre>
-            {JSON.stringify(host, null, 2)}
-          </pre>
-        </>
-      )}
+      {host && <HostEditor host={host} />}
     </AppShell>
   );
 }

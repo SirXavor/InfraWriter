@@ -1,13 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
+import { EditorStateProvider } from "./EditorStateContext";
 
 const queryClient = new QueryClient();
 
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>{children}</BrowserRouter>
+      <BrowserRouter>
+        <EditorStateProvider>{children}</EditorStateProvider>
+      </BrowserRouter>
     </QueryClientProvider>
   );
 }

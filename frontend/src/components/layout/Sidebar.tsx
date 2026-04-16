@@ -1,16 +1,22 @@
 import { useHosts } from "../../hooks/useHosts";
-import { useNavigate } from "react-router-dom";
-import { useEditorState } from "../../app/EditorStateContext";
+import { useNavigate, useParams } from "react-router-dom";
+import { useEditorStore } from "../../stores/editorStore";
 
 export default function Sidebar() {
   const { data: hosts, isLoading, isError, error } = useHosts();
   const navigate = useNavigate();
-  const { isDirty } = useEditorState();
+  const { hostId: currentHostId } = useParams();
+
+  const hasDraft = useEditorStore((s) => s.hasDraft);
 
   const realHosts = (hosts ?? []).filter((host) => host.id);
 
-  function handleNavigate(hostId: string) {
-    if (isDirty) {
+  function handleNavigate(targetHostId: string) {
+    if (
+      currentHostId &&
+      currentHostId !== targetHostId &&
+      hasDraft(currentHostId)
+    ) {
       const confirmed = window.confirm(
         "Tienes cambios sin guardar. ¿Quieres salir igualmente?"
       );
@@ -18,7 +24,7 @@ export default function Sidebar() {
       if (!confirmed) return;
     }
 
-    navigate(`/hosts/${hostId}`);
+    navigate(`/hosts/${targetHostId}`);
   }
 
   return (
@@ -51,7 +57,13 @@ export default function Sidebar() {
                 className="host-list-item"
                 onClick={() => handleNavigate(host.id!)}
               >
-                <div className="host-name">{host.name}</div>
+                <div className="host-name">
+                  {host.name}
+                  {hasDraft(host.id!) && (
+                    <span className="dirty-indicator">*</span>
+                  )}
+                </div>
+
                 <div className="host-meta">
                   {host.hostname} · {host.provisioning.distro}
                 </div>

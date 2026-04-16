@@ -1,19 +1,38 @@
-import { useForm, Controller } from "react-hook-form";
+import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
 import type { Host } from "../../features/hosts/host.types";
 import IdentitySection from "../host-form/IdentitySection";
 import ProvisioningSection from "../host-form/ProvisioningSection";
-import RolesSelector from "../host-form/RolesSelector";
+import AnsibleSection from "../host-form/AnsibleSection";
+import ApplicationsSection from "../host-form/ApplicationsSection";
+import YamlPreviewSection from "../preview/YamlPreviewSection";
+import EditorTabs from "../common/EditorTabs";
 import { useUpdateHost } from "../../hooks/useUpdateHost";
-import { useEffect } from "react";
-import { useEditorState } from "../../app/EditorStateContext";
+import { useEditorStore } from "../../stores/editorStore";
 
 interface HostEditorProps {
   host: Host;
 }
 
+const tabs = [
+  { key: "identity", label: "Identidad" },
+  { key: "provisioning", label: "Provisioning" },
+  { key: "ansible", label: "Ansible" },
+  { key: "applications", label: "Aplicaciones" },
+  { key: "yaml", label: "YAML" },
+];
+
 export default function HostEditor({ host }: HostEditorProps) {
+  const [activeTab, setActiveTab] = useState("identity");
+
+  const setDraft = useEditorStore((s) => s.setDraft);
+  const getDraft = useEditorStore((s) => s.getDraft);
+  const clearDraft = useEditorStore((s) => s.clearDraft);
+
+  const draft = host.id ? getDraft(host.id) : undefined;
+
   const form = useForm<Host>({
-    defaultValues: host,
+    defaultValues: draft ?? host,
   });
 
   const {
@@ -23,27 +42,40 @@ export default function HostEditor({ host }: HostEditorProps) {
     control,
     handleSubmit,
     formState,
+    reset,
   } = form;
 
   const values = watch();
-
   const { mutate, isPending } = useUpdateHost(host.id!);
 
-  const { setIsDirty } = useEditorState();
-
-  function onSubmit(data: Host) {
-    mutate(data);
-  }
+  useEffect(() => {
+    reset(draft ?? host);
+  }, [draft, host, reset]);
 
   useEffect(() => {
-    setIsDirty(formState.isDirty);
-  }, [formState.isDirty, setIsDirty]);
-  
+    if (!host.id) return;
+
+    if (formState.isDirty) {
+      setDraft(host.id, values);
+    } else {
+      clearDraft(host.id);
+    }
+  }, [values, host.id, formState.isDirty, setDraft, clearDraft]);
+
+  function onSubmit(data: Host) {
+    mutate(data, {
+      onSuccess: () => {
+        clearDraft(host.id!);
+        reset(data);
+      },
+    });
+  }
+
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="host-editor">
       <header className="editor-header">
-        <h2 className="editor-title">{host.name}</h2>
-        <div className="editor-subtitle">{host.hostname}</div>
+        <h2 className="editor-title">{values.name}</h2>
+        <div className="editor-subtitle">{values.hostname}</div>
       </header>
 
       <div className="editor-actions">
@@ -56,35 +88,32 @@ export default function HostEditor({ host }: HostEditorProps) {
         )}
       </div>
 
-      <IdentitySection register={register} />
-
-      <ProvisioningSection
-        register={register}
-        watch={watch}
-        setValue={setValue}
+      <EditorTabs
+        tabs={tabs}
+        activeTab={activeTab}
+        onChange={setActiveTab}
       />
 
-      <section className="editor-section">
-        <h3 className="editor-section-title">Roles</h3>
+      {activeTab === "identity" && <IdentitySection register={register} />}
 
-        <Controller
-          control={control}
-          name="automation.roles"
-          render={({ field }) => (
-            <RolesSelector
-              value={field.value ?? []}
-              onChange={field.onChange}
-            />
-          )}
+      {activeTab === "provisioning" && (
+        <ProvisioningSection
+          register={register}
+          watch={watch}
+          setValue={setValue}
         />
-      </section>
+      )}
 
-      <section className="editor-section">
-        <h3 className="editor-section-title">Preview JSON</h3>
-        <pre className="editor-preview">
-          {JSON.stringify(values, null, 2)}
-        </pre>
-      </section>
+      {activeTab === "ansible" && (
+        <AnsibleSection
+          register={register}
+          control={control}
+        />
+      )}
+
+      {activeTab === "applications" && <ApplicationsSection />}
+
+      {activeTab === "yaml" && <YamlPreviewSection data={values} />}
     </form>
   );
 }

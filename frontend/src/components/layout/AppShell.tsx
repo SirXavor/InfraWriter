@@ -1,6 +1,6 @@
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 
 export default function AppShell({ children }: { children: ReactNode }) {
   return (

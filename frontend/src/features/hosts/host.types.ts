@@ -47,6 +47,12 @@ export interface HostAutomation {
   vars: HostAutomationVars;
 }
 
+export interface AppConfig {
+  kind: string;
+  enabled: boolean;
+  values: Record<string, unknown>;
+}
+
 export interface Host {
   id?: string;
   kind: HostKind;
@@ -56,4 +62,5 @@ export interface Host {
   hostname: string;
   provisioning: HostProvisioning;
   automation: HostAutomation;
+  apps?: Record<string, AppConfig>;
 }

@@ -62,6 +62,12 @@ class AutomationModel(BaseModel):
     vars: Dict[str, Any] = Field(default_factory=dict)
 
 
+class AppConfigModel(BaseModel):
+    kind: str
+    enabled: bool = True
+    values: Dict[str, Any] = Field(default_factory=dict)
+
+
 class HostManifestModel(BaseModel):
     kind: Literal["host"] = "host"
     name: str
@@ -70,3 +76,4 @@ class HostManifestModel(BaseModel):
     hostname: str
     provisioning: Optional[ProvisioningModel] = None
     automation: AutomationModel
+    apps: Optional[Dict[str, AppConfigModel]] = None

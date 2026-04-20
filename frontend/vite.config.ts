@@ -6,14 +6,12 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "https://infrawriter.manabo.org",
+        target: process.env.VITE_BACKEND_URL ?? "http://localhost:8000",
         changeOrigin: true,
-        secure: false,
       },
       "/health": {
-        target: "https://infrawriter.manabo.org",
+        target: process.env.VITE_BACKEND_URL ?? "http://localhost:8000",
         changeOrigin: true,
-        secure: false,
       },
     },
   },

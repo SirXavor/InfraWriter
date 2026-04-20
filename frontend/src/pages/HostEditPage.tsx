@@ -1,18 +1,19 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import AppShell from "../components/layout/AppShell";
 import { useHost } from "../hooks/useHost";
-import { useDistros, useRoles } from "../hooks/useCatalog";
+import { useDistros, useProfilesByDistro, useRoles } from "../hooks/useCatalog";
 import {
   useCreateHost,
   useUpdateHost,
   useDeleteHost,
 } from "../hooks/useHostMutations";
+import { useEditorStore } from "../stores/editorStore";
 import type { Host, AppConfig } from "../features/hosts/host.types";
 
 // ---------------------------------------------------------------------------
-// Local form types
+// Local types
 // ---------------------------------------------------------------------------
 
 type Tab = "general" | "provisioning" | "automation" | "usuarios" | "apps";
@@ -20,9 +21,9 @@ type Tab = "general" | "provisioning" | "automation" | "usuarios" | "apps";
 interface UserRow {
   name: string;
   password: string;
-  groups: string;   // comma-separated
+  groups: string;
   shell: string;
-  ssh_keys: string; // newline-separated
+  ssh_keys: string;
 }
 
 interface AppRow {
@@ -32,15 +33,14 @@ interface AppRow {
 }
 
 interface ScalarFields {
-  name: string;
   hostname: string;
-  profile: string;
   distro: string;
   version: string;
+  profile: string;
   server: string;
   luks_passphrase: string;
   tang_url: string;
-  ubuntu_iso: string;
+  // hidden — preserved from existing host or defaults
   repo_url: string;
   repo_branch: string;
   repo_local_path: string;
@@ -49,7 +49,7 @@ interface ScalarFields {
 }
 
 // ---------------------------------------------------------------------------
-// Apps catalog — field definitions per kind
+// Apps catalog
 // ---------------------------------------------------------------------------
 
 interface FieldDef {
@@ -69,21 +69,24 @@ const KIND_FIELDS: Record<string, FieldDef[]> = {
 
 const KNOWN_KINDS = Object.keys(KIND_FIELDS);
 
+// Roles that enable the Apps tab
+const K8S_ROLES = ["k3s-edge", "k3s", "k8s", "kubernetes"];
+// Roles that are always selected and cannot be removed
+const REQUIRED_ROLES = ["automation"];
+
 // ---------------------------------------------------------------------------
 // Conversion helpers
 // ---------------------------------------------------------------------------
 
 function hostToScalars(host: Host): ScalarFields {
   return {
-    name: host.name,
     hostname: host.hostname,
-    profile: host.profile,
     distro: host.provisioning?.distro ?? "",
     version: host.provisioning?.version ?? "",
+    profile: host.profile,
     server: (host.provisioning as any)?.server ?? "",
     luks_passphrase: (host.provisioning as any)?.luks_passphrase ?? "",
     tang_url: (host.provisioning as any)?.tang_url ?? "",
-    ubuntu_iso: (host.provisioning as any)?.ubuntu_iso ?? "",
     repo_url: host.automation.repo.url,
     repo_branch: host.automation.repo.branch,
     repo_local_path: host.automation.repo.local_path,
@@ -94,17 +97,18 @@ function hostToScalars(host: Host): ScalarFields {
 
 function hostToApps(host: Host): Record<string, AppRow> {
   if (!host.apps) return {};
-  const result: Record<string, AppRow> = {};
-  for (const [key, app] of Object.entries(host.apps)) {
-    result[key] = {
-      kind: app.kind,
-      enabled: app.enabled,
-      values: Object.fromEntries(
-        Object.entries(app.values).map(([k, v]) => [k, String(v)])
-      ),
-    };
-  }
-  return result;
+  return Object.fromEntries(
+    Object.entries(host.apps).map(([key, app]) => [
+      key,
+      {
+        kind: app.kind,
+        enabled: app.enabled,
+        values: Object.fromEntries(
+          Object.entries(app.values).map(([k, v]) => [k, String(v)])
+        ),
+      },
+    ])
+  );
 }
 
 function parseAppValues(
@@ -112,12 +116,12 @@ function parseAppValues(
   values: Record<string, string>
 ): Record<string, unknown> {
   const fields = KIND_FIELDS[kind] ?? [];
-  const result: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(values)) {
-    const field = fields.find((f) => f.name === k);
-    result[k] = field?.type === "number" ? (v === "" ? undefined : Number(v)) : v;
-  }
-  return result;
+  return Object.fromEntries(
+    Object.entries(values).map(([k, v]) => {
+      const field = fields.find((f) => f.name === k);
+      return [k, field?.type === "number" ? (v === "" ? undefined : Number(v)) : v];
+    })
+  );
 }
 
 function buildHost(
@@ -128,7 +132,6 @@ function buildHost(
   apps: Record<string, AppRow>
 ): Host {
   const cleanMacs = macs.map((m) => m.trim()).filter(Boolean);
-
   const appsOut: Record<string, AppConfig> = {};
   for (const [key, row] of Object.entries(apps)) {
     appsOut[key] = {
@@ -137,10 +140,9 @@ function buildHost(
       values: parseAppValues(row.kind, row.values),
     };
   }
-
   return {
     kind: "host",
-    name: s.name,
+    name: s.hostname,
     hostname: s.hostname,
     profile: s.profile,
     identity: cleanMacs.length > 0 ? { mac: cleanMacs } : undefined,
@@ -151,7 +153,6 @@ function buildHost(
           ...(s.server && { server: s.server }),
           ...(s.luks_passphrase && { luks_passphrase: s.luks_passphrase }),
           ...(s.tang_url && { tang_url: s.tang_url }),
-          ...(s.ubuntu_iso && { ubuntu_iso: s.ubuntu_iso }),
         } as any)
       : undefined,
     automation: {
@@ -171,15 +172,9 @@ function buildHost(
           .map((u) => ({
             name: u.name.trim(),
             ...(u.password && { password: u.password }),
-            groups: u.groups
-              .split(",")
-              .map((g) => g.trim())
-              .filter(Boolean),
+            groups: u.groups.split(",").map((g) => g.trim()).filter(Boolean),
             shell: u.shell || "/bin/bash",
-            ssh_keys: u.ssh_keys
-              .split("\n")
-              .map((k) => k.trim())
-              .filter(Boolean),
+            ssh_keys: u.ssh_keys.split("\n").map((k) => k.trim()).filter(Boolean),
           })),
       },
     },
@@ -191,8 +186,6 @@ function buildHost(
 // Component
 // ---------------------------------------------------------------------------
 
-const DISTROS = ["ubuntu", "rhel", "rocky", "almalinux", "centos"];
-
 const TABS: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
   { id: "provisioning", label: "Provisioning" },
@@ -201,20 +194,42 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "apps", label: "Aplicaciones" },
 ];
 
+const DEFAULT_SCALARS: ScalarFields = {
+  hostname: "",
+  distro: "",
+  version: "",
+  profile: "",
+  server: "",
+  luks_passphrase: "",
+  tang_url: "",
+  repo_url: "https://github.com/SirXavor/InfraServer.git",
+  repo_branch: "main",
+  repo_local_path: "/opt/InfraServer",
+  playbook: "playbooks/bootstrap.yaml",
+  interval: "1h",
+};
+
 export default function HostEditPage() {
   const { hostId } = useParams<{ hostId: string }>();
   const navigate = useNavigate();
   const isNew = hostId === "new";
+  const draftKey = hostId ?? "new";
 
   const [tab, setTab] = useState<Tab>("general");
   const [macs, setMacs] = useState<string[]>([""]);
-  const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
+  const [selectedRoles, setSelectedRoles] = useState<string[]>(REQUIRED_ROLES);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [apps, setApps] = useState<Record<string, AppRow>>({});
   const [expandedApp, setExpandedApp] = useState<string | null>(null);
   const [newAppKey, setNewAppKey] = useState("");
   const [newAppKind, setNewAppKind] = useState(KNOWN_KINDS[0] ?? "");
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [initialized, setInitialized] = useState(false);
+
+  const setDraft = useEditorStore((s) => s.setDraft);
+  const getDraft = useEditorStore((s) => s.getDraft);
+  const clearDraft = useEditorStore((s) => s.clearDraft);
+  const hasDraft = useEditorStore((s) => s.hasDraft);
 
   const { data: existingHost, isLoading: loadingHost } = useHost(
     isNew ? undefined : hostId
@@ -222,35 +237,34 @@ export default function HostEditPage() {
   const { data: distros } = useDistros();
   const { data: allRoles } = useRoles();
 
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { isSubmitting },
-  } = useForm<ScalarFields>({
-    defaultValues: {
-      repo_branch: "main",
-      repo_local_path: "/opt/InfraServer",
-      playbook: "playbooks/bootstrap.yaml",
-      interval: "1h",
-    },
-  });
+  const form = useForm<ScalarFields>({ defaultValues: DEFAULT_SCALARS });
+  const { register, handleSubmit, reset, control, formState: { isSubmitting } } = form;
+
+  const watchedDistro = useWatch({ control, name: "distro" });
+  const { data: profiles } = useProfilesByDistro(watchedDistro || undefined);
 
   const createMut = useCreateHost();
   const updateMut = useUpdateHost(hostId ?? "");
   const deleteMut = useDeleteHost();
 
+  const appsEnabled = selectedRoles.some((r) => K8S_ROLES.includes(r));
+  const appCount = Object.keys(apps).length;
+  const isDirty = hasDraft(draftKey);
+
+  // Restore draft or existing host (runs once when data is ready)
   useEffect(() => {
-    if (existingHost) {
-      reset(hostToScalars(existingHost));
-      setMacs(
-        existingHost.identity?.mac?.length
-          ? existingHost.identity.mac
-          : [""]
+    if (initialized) return;
+    if (!isNew && loadingHost) return;
+
+    const source = getDraft(draftKey) ?? existingHost;
+    if (source) {
+      reset(hostToScalars(source));
+      setMacs(source.identity?.mac?.length ? source.identity.mac : [""]);
+      setSelectedRoles(
+        source.automation.roles?.length ? source.automation.roles : REQUIRED_ROLES
       );
-      setSelectedRoles(existingHost.automation.roles ?? []);
       setUsers(
-        (existingHost.automation.vars?.users ?? []).map((u) => ({
+        (source.automation.vars?.users ?? []).map((u) => ({
           name: u.name,
           password: u.password ?? "",
           groups: (u.groups ?? []).join(", "),
@@ -258,9 +272,26 @@ export default function HostEditPage() {
           ssh_keys: (u.ssh_keys ?? []).join("\n"),
         }))
       );
-      setApps(hostToApps(existingHost));
+      setApps(hostToApps(source));
     }
-  }, [existingHost, reset]);
+    setInitialized(true);
+  }, [existingHost, loadingHost, initialized, isNew, getDraft, draftKey, reset]);
+
+  // Save draft on any change after initialization
+  useEffect(() => {
+    if (!initialized) return;
+    const { unsubscribe } = form.watch((values) => {
+      const h = buildHost(
+        values as ScalarFields,
+        macs,
+        selectedRoles,
+        users,
+        apps
+      );
+      setDraft(draftKey, h);
+    });
+    return unsubscribe;
+  }, [form, macs, selectedRoles, users, apps, draftKey, setDraft, initialized]);
 
   const onSubmit = handleSubmit(async (scalars) => {
     setSaveError(null);
@@ -271,19 +302,19 @@ export default function HostEditPage() {
       } else {
         await updateMut.mutateAsync(host);
       }
+      clearDraft(draftKey);
       navigate("/");
     } catch (e: any) {
-      setSaveError(
-        e?.response?.data?.detail ?? "Error al guardar. Revisa los datos."
-      );
+      setSaveError(e?.response?.data?.detail ?? "Error al guardar. Revisa los datos.");
     }
   });
 
   const onDelete = async () => {
     if (!hostId || isNew) return;
-    if (!confirm(`¿Eliminar el host "${existingHost?.name ?? hostId}"?`)) return;
+    if (!confirm(`¿Eliminar el host "${existingHost?.hostname ?? hostId}"?`)) return;
     try {
       await deleteMut.mutateAsync(hostId);
+      clearDraft(draftKey);
       navigate("/");
     } catch (e: any) {
       setSaveError(e?.response?.data?.detail ?? "Error al eliminar.");
@@ -291,6 +322,7 @@ export default function HostEditPage() {
   };
 
   const toggleRole = (role: string) => {
+    if (REQUIRED_ROLES.includes(role)) return;
     setSelectedRoles((prev) =>
       prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]
     );
@@ -298,39 +330,30 @@ export default function HostEditPage() {
 
   const updateMac = (i: number, val: string) =>
     setMacs((prev) => prev.map((m, j) => (j === i ? val : m)));
-
   const removeMac = (i: number) =>
     setMacs((prev) => prev.filter((_, j) => j !== i));
 
   const updateUser = (i: number, patch: Partial<UserRow>) =>
     setUsers((prev) => prev.map((u, j) => (j === i ? { ...u, ...patch } : u)));
-
   const removeUser = (i: number) =>
     setUsers((prev) => prev.filter((_, j) => j !== i));
 
-  // Apps helpers
   const toggleAppEnabled = (key: string) =>
     setApps((prev) => ({
       ...prev,
       [key]: { ...prev[key], enabled: !prev[key].enabled },
     }));
-
   const updateAppValue = (key: string, field: string, value: string) =>
     setApps((prev) => ({
       ...prev,
-      [key]: {
-        ...prev[key],
-        values: { ...prev[key].values, [field]: value },
-      },
+      [key]: { ...prev[key], values: { ...prev[key].values, [field]: value } },
     }));
-
   const removeApp = (key: string) =>
     setApps((prev) => {
       const next = { ...prev };
       delete next[key];
       return next;
     });
-
   const addApp = () => {
     const key = newAppKey.trim();
     if (!key || apps[key]) return;
@@ -355,13 +378,12 @@ export default function HostEditPage() {
     );
   }
 
-  const appCount = Object.keys(apps).length;
-
   return (
     <AppShell>
       <div className="page-header">
         <h1 className="page-title">
-          {isNew ? "Nuevo host" : (existingHost?.name ?? hostId)}
+          {isNew ? "Nuevo host" : (existingHost?.hostname ?? hostId)}
+          {isDirty && <span className="draft-badge">sin guardar</span>}
         </h1>
         <button
           type="button"
@@ -373,54 +395,69 @@ export default function HostEditPage() {
       </div>
 
       <form onSubmit={onSubmit}>
+        {/* Hidden fields — git/playbook config preserved but not shown */}
+        <input type="hidden" {...register("repo_url")} />
+        <input type="hidden" {...register("repo_branch")} />
+        <input type="hidden" {...register("repo_local_path")} />
+        <input type="hidden" {...register("playbook")} />
+        <input type="hidden" {...register("interval")} />
+
         <div className="form-tabs">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={`form-tab${tab === t.id ? " active" : ""}`}
-              onClick={() => setTab(t.id)}
-            >
-              {t.label}
-              {t.id === "apps" && appCount > 0 && (
-                <span className="tab-badge">{appCount}</span>
-              )}
-            </button>
-          ))}
+          {TABS.map((t) => {
+            if (t.id === "apps" && !appsEnabled) return null;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                className={`form-tab${tab === t.id ? " active" : ""}`}
+                onClick={() => setTab(t.id)}
+              >
+                {t.label}
+                {t.id === "apps" && appCount > 0 && (
+                  <span className="tab-badge">{appCount}</span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         {/* ---- GENERAL ---- */}
         {tab === "general" && (
           <div className="form-section">
-            <div className="form-row">
-              <div className="form-field">
-                <label className="form-label">Nombre</label>
-                <input
-                  {...register("name", { required: true })}
-                  className="form-input"
-                  placeholder="edge-node-01"
-                />
-              </div>
-              <div className="form-field">
-                <label className="form-label">Hostname</label>
-                <input
-                  {...register("hostname", { required: true })}
-                  className="form-input"
-                  placeholder="k3s-edge-01"
-                />
-              </div>
+            <div className="form-field">
+              <label className="form-label">Hostname</label>
+              <input
+                {...register("hostname", { required: true })}
+                className="form-input"
+                placeholder="k3s-edge-01"
+                disabled={!isNew}
+              />
+              {!isNew && (
+                <span className="field-hint">
+                  El hostname no se puede cambiar en un host existente.
+                </span>
+              )}
             </div>
 
             <div className="form-field">
-              <label className="form-label">Perfil de almacenamiento</label>
-              <input
-                {...register("profile", { required: true })}
-                className="form-input"
-                placeholder="noswap"
-              />
-              <span className="field-hint">
-                ej: noswap · edge-tang-storage · default-storage
-              </span>
+              <label className="form-label">Sistema operativo</label>
+              <select
+                {...register("distro")}
+                className="form-select"
+                disabled={!isNew}
+              >
+                <option value="">— Seleccionar —</option>
+                {(distros ?? []).map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+              {!isNew && (
+                <span className="field-hint">
+                  No se puede cambiar el SO de un host existente.
+                </span>
+              )}
             </div>
 
             <div className="form-field">
@@ -458,14 +495,29 @@ export default function HostEditPage() {
         {/* ---- PROVISIONING ---- */}
         {tab === "provisioning" && (
           <div className="form-section">
+            {!isNew && (
+              <p className="field-hint field-hint--warn">
+                El provisioning no se puede modificar en un host ya creado.
+              </p>
+            )}
+
             <div className="form-row">
               <div className="form-field">
-                <label className="form-label">Distro</label>
-                <select {...register("distro")} className="form-select">
+                <label className="form-label">Perfil de almacenamiento</label>
+                <select
+                  {...register("profile", { required: true })}
+                  className="form-select"
+                  disabled={!isNew}
+                >
                   <option value="">— Seleccionar —</option>
-                  {(distros ?? DISTROS).map((d) => (
-                    <option key={d} value={d}>
-                      {d}
+                  {!watchedDistro && isNew && (
+                    <option value="" disabled>
+                      Selecciona un SO primero
+                    </option>
+                  )}
+                  {(profiles ?? []).map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name}
                     </option>
                   ))}
                 </select>
@@ -476,6 +528,7 @@ export default function HostEditPage() {
                   {...register("version")}
                   className="form-input"
                   placeholder="24.04"
+                  disabled={!isNew}
                 />
               </div>
             </div>
@@ -486,6 +539,7 @@ export default function HostEditPage() {
                 {...register("server")}
                 className="form-input"
                 placeholder="192.168.1.70:8081"
+                disabled={!isNew}
               />
             </div>
 
@@ -497,6 +551,7 @@ export default function HostEditPage() {
                   className="form-input"
                   type="password"
                   autoComplete="new-password"
+                  disabled={!isNew}
                 />
               </div>
               <div className="form-field">
@@ -505,85 +560,49 @@ export default function HostEditPage() {
                   {...register("tang_url")}
                   className="form-input"
                   placeholder="http://192.168.1.70:8082"
+                  disabled={!isNew}
                 />
               </div>
-            </div>
-
-            <div className="form-field">
-              <label className="form-label">Ubuntu ISO</label>
-              <input
-                {...register("ubuntu_iso")}
-                className="form-input"
-                placeholder="ubuntu-24.04.4-live-server-amd64.iso"
-              />
             </div>
           </div>
         )}
 
         {/* ---- AUTOMATION ---- */}
         {tab === "automation" && (
-          <>
-            <div className="form-section">
-              <p className="form-section-title">Repositorio Git</p>
-              <div className="form-field">
-                <label className="form-label">URL</label>
-                <input
-                  {...register("repo_url", { required: true })}
-                  className="form-input"
-                  placeholder="https://github.com/usuario/InfraServer.git"
-                />
-              </div>
-              <div className="form-row">
-                <div className="form-field">
-                  <label className="form-label">Rama</label>
-                  <input {...register("repo_branch")} className="form-input" />
-                </div>
-                <div className="form-field">
-                  <label className="form-label">Ruta local</label>
-                  <input
-                    {...register("repo_local_path")}
-                    className="form-input"
-                  />
-                </div>
-              </div>
-              <div className="form-row">
-                <div className="form-field">
-                  <label className="form-label">Playbook</label>
-                  <input {...register("playbook")} className="form-input" />
-                </div>
-                <div className="form-field">
-                  <label className="form-label">Intervalo de sync</label>
-                  <input
-                    {...register("interval")}
-                    className="form-input"
-                    placeholder="1h"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="form-section">
-              <p className="form-section-title">Roles de Ansible</p>
-              {allRoles ? (
-                <div className="roles-grid">
-                  {allRoles.map((role) => (
-                    <label key={role} className="role-item">
+          <div className="form-section">
+            <p className="form-section-title">Roles de Ansible</p>
+            {allRoles ? (
+              <div className="roles-grid">
+                {allRoles.map((role) => {
+                  const isRequired = REQUIRED_ROLES.includes(role);
+                  return (
+                    <label
+                      key={role}
+                      className={`role-item${isRequired ? " role-item--required" : ""}`}
+                    >
                       <input
                         type="checkbox"
                         checked={selectedRoles.includes(role)}
                         onChange={() => toggleRole(role)}
+                        disabled={isRequired}
                       />
                       <div>
                         <div className="role-name">{role}</div>
+                        {isRequired && (
+                          <div className="role-desc">Requerido</div>
+                        )}
+                        {K8S_ROLES.includes(role) && (
+                          <div className="role-desc">Habilita pestaña de apps</div>
+                        )}
                       </div>
                     </label>
-                  ))}
-                </div>
-              ) : (
-                <p className="field-hint">Cargando roles del catálogo...</p>
-              )}
-            </div>
-          </>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="field-hint">Cargando roles del catálogo...</p>
+            )}
+          </div>
         )}
 
         {/* ---- USUARIOS ---- */}
@@ -617,9 +636,7 @@ export default function HostEditPage() {
                     <input
                       className="form-input"
                       value={user.shell}
-                      onChange={(e) =>
-                        updateUser(i, { shell: e.target.value })
-                      }
+                      onChange={(e) => updateUser(i, { shell: e.target.value })}
                     />
                   </div>
                 </div>
@@ -629,9 +646,7 @@ export default function HostEditPage() {
                     <input
                       className="form-input"
                       value={user.password}
-                      onChange={(e) =>
-                        updateUser(i, { password: e.target.value })
-                      }
+                      onChange={(e) => updateUser(i, { password: e.target.value })}
                       placeholder="$6$salt$hash..."
                     />
                   </div>
@@ -640,24 +655,18 @@ export default function HostEditPage() {
                     <input
                       className="form-input"
                       value={user.groups}
-                      onChange={(e) =>
-                        updateUser(i, { groups: e.target.value })
-                      }
+                      onChange={(e) => updateUser(i, { groups: e.target.value })}
                       placeholder="sudo, docker"
                     />
                   </div>
                 </div>
                 <div className="form-field">
-                  <label className="form-label">
-                    SSH Keys (una por línea)
-                  </label>
+                  <label className="form-label">SSH Keys (una por línea)</label>
                   <textarea
                     className="form-textarea"
                     value={user.ssh_keys}
                     rows={4}
-                    onChange={(e) =>
-                      updateUser(i, { ssh_keys: e.target.value })
-                    }
+                    onChange={(e) => updateUser(i, { ssh_keys: e.target.value })}
                     placeholder="ssh-ed25519 AAAA... Comentario"
                   />
                 </div>
@@ -669,13 +678,7 @@ export default function HostEditPage() {
               onClick={() =>
                 setUsers((prev) => [
                   ...prev,
-                  {
-                    name: "",
-                    password: "",
-                    groups: "",
-                    shell: "/bin/bash",
-                    ssh_keys: "",
-                  },
+                  { name: "", password: "", groups: "", shell: "/bin/bash", ssh_keys: "" },
                 ])
               }
             >
@@ -685,13 +688,16 @@ export default function HostEditPage() {
         )}
 
         {/* ---- APPS ---- */}
-        {tab === "apps" && (
+        {tab === "apps" && appsEnabled && (
           <div className="form-section">
             {Object.entries(apps).map(([key, app]) => {
               const fields = KIND_FIELDS[app.kind] ?? [];
               const isExpanded = expandedApp === key;
               return (
-                <div key={key} className={`app-card${app.enabled ? "" : " app-card--disabled"}`}>
+                <div
+                  key={key}
+                  className={`app-card${app.enabled ? "" : " app-card--disabled"}`}
+                >
                   <div className="app-card-header">
                     <div className="app-card-info">
                       <span className="app-card-key">{key}</span>
@@ -709,10 +715,7 @@ export default function HostEditPage() {
                       <button
                         type="button"
                         className="btn-icon"
-                        onClick={() =>
-                          setExpandedApp(isExpanded ? null : key)
-                        }
-                        title={isExpanded ? "Colapsar" : "Editar"}
+                        onClick={() => setExpandedApp(isExpanded ? null : key)}
                       >
                         {isExpanded ? "▲" : "▼"}
                       </button>
@@ -720,13 +723,11 @@ export default function HostEditPage() {
                         type="button"
                         className="btn-icon btn-icon--danger"
                         onClick={() => removeApp(key)}
-                        title="Eliminar"
                       >
                         ✕
                       </button>
                     </div>
                   </div>
-
                   {isExpanded && (
                     <div className="app-card-body">
                       {fields.length > 0 ? (
@@ -741,13 +742,15 @@ export default function HostEditPage() {
                               onChange={(e) =>
                                 updateAppValue(key, field.name, e.target.value)
                               }
-                              autoComplete={field.type === "password" ? "new-password" : undefined}
+                              autoComplete={
+                                field.type === "password" ? "new-password" : undefined
+                              }
                             />
                           </div>
                         ))
                       ) : (
                         <p className="field-hint">
-                          Sin campos definidos para el tipo "{app.kind}".
+                          Sin campos definidos para "{app.kind}".
                         </p>
                       )}
                     </div>

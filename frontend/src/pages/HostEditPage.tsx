@@ -9,13 +9,13 @@ import {
   useUpdateHost,
   useDeleteHost,
 } from "../hooks/useHostMutations";
-import type { Host } from "../features/hosts/host.types";
+import type { Host, AppConfig } from "../features/hosts/host.types";
 
 // ---------------------------------------------------------------------------
 // Local form types
 // ---------------------------------------------------------------------------
 
-type Tab = "general" | "provisioning" | "automation" | "usuarios";
+type Tab = "general" | "provisioning" | "automation" | "usuarios" | "apps";
 
 interface UserRow {
   name: string;
@@ -23,6 +23,12 @@ interface UserRow {
   groups: string;   // comma-separated
   shell: string;
   ssh_keys: string; // newline-separated
+}
+
+interface AppRow {
+  kind: string;
+  enabled: boolean;
+  values: Record<string, string>;
 }
 
 interface ScalarFields {
@@ -41,6 +47,27 @@ interface ScalarFields {
   playbook: string;
   interval: string;
 }
+
+// ---------------------------------------------------------------------------
+// Apps catalog — field definitions per kind
+// ---------------------------------------------------------------------------
+
+interface FieldDef {
+  name: string;
+  label: string;
+  type: "text" | "number" | "password";
+  placeholder?: string;
+}
+
+const KIND_FIELDS: Record<string, FieldDef[]> = {
+  wireguard: [
+    { name: "url", label: "URL / dominio", type: "text", placeholder: "wg.example.com" },
+    { name: "port", label: "Puerto UDP", type: "number", placeholder: "51820" },
+    { name: "password", label: "Contraseña admin", type: "password" },
+  ],
+};
+
+const KNOWN_KINDS = Object.keys(KIND_FIELDS);
 
 // ---------------------------------------------------------------------------
 // Conversion helpers
@@ -65,13 +92,52 @@ function hostToScalars(host: Host): ScalarFields {
   };
 }
 
+function hostToApps(host: Host): Record<string, AppRow> {
+  if (!host.apps) return {};
+  const result: Record<string, AppRow> = {};
+  for (const [key, app] of Object.entries(host.apps)) {
+    result[key] = {
+      kind: app.kind,
+      enabled: app.enabled,
+      values: Object.fromEntries(
+        Object.entries(app.values).map(([k, v]) => [k, String(v)])
+      ),
+    };
+  }
+  return result;
+}
+
+function parseAppValues(
+  kind: string,
+  values: Record<string, string>
+): Record<string, unknown> {
+  const fields = KIND_FIELDS[kind] ?? [];
+  const result: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(values)) {
+    const field = fields.find((f) => f.name === k);
+    result[k] = field?.type === "number" ? (v === "" ? undefined : Number(v)) : v;
+  }
+  return result;
+}
+
 function buildHost(
   s: ScalarFields,
   macs: string[],
   roles: string[],
-  users: UserRow[]
+  users: UserRow[],
+  apps: Record<string, AppRow>
 ): Host {
   const cleanMacs = macs.map((m) => m.trim()).filter(Boolean);
+
+  const appsOut: Record<string, AppConfig> = {};
+  for (const [key, row] of Object.entries(apps)) {
+    appsOut[key] = {
+      kind: row.kind,
+      enabled: row.enabled,
+      values: parseAppValues(row.kind, row.values),
+    };
+  }
+
   return {
     kind: "host",
     name: s.name,
@@ -117,6 +183,7 @@ function buildHost(
           })),
       },
     },
+    ...(Object.keys(appsOut).length > 0 && { apps: appsOut }),
   };
 }
 
@@ -131,6 +198,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "provisioning", label: "Provisioning" },
   { id: "automation", label: "Automatización" },
   { id: "usuarios", label: "Usuarios" },
+  { id: "apps", label: "Aplicaciones" },
 ];
 
 export default function HostEditPage() {
@@ -142,6 +210,10 @@ export default function HostEditPage() {
   const [macs, setMacs] = useState<string[]>([""]);
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [apps, setApps] = useState<Record<string, AppRow>>({});
+  const [expandedApp, setExpandedApp] = useState<string | null>(null);
+  const [newAppKey, setNewAppKey] = useState("");
+  const [newAppKind, setNewAppKind] = useState(KNOWN_KINDS[0] ?? "");
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const { data: existingHost, isLoading: loadingHost } = useHost(
@@ -186,12 +258,13 @@ export default function HostEditPage() {
           ssh_keys: (u.ssh_keys ?? []).join("\n"),
         }))
       );
+      setApps(hostToApps(existingHost));
     }
   }, [existingHost, reset]);
 
   const onSubmit = handleSubmit(async (scalars) => {
     setSaveError(null);
-    const host = buildHost(scalars, macs, selectedRoles, users);
+    const host = buildHost(scalars, macs, selectedRoles, users, apps);
     try {
       if (isNew) {
         await createMut.mutateAsync(host);
@@ -235,6 +308,45 @@ export default function HostEditPage() {
   const removeUser = (i: number) =>
     setUsers((prev) => prev.filter((_, j) => j !== i));
 
+  // Apps helpers
+  const toggleAppEnabled = (key: string) =>
+    setApps((prev) => ({
+      ...prev,
+      [key]: { ...prev[key], enabled: !prev[key].enabled },
+    }));
+
+  const updateAppValue = (key: string, field: string, value: string) =>
+    setApps((prev) => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        values: { ...prev[key].values, [field]: value },
+      },
+    }));
+
+  const removeApp = (key: string) =>
+    setApps((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+
+  const addApp = () => {
+    const key = newAppKey.trim();
+    if (!key || apps[key]) return;
+    const fields = KIND_FIELDS[newAppKind] ?? [];
+    setApps((prev) => ({
+      ...prev,
+      [key]: {
+        kind: newAppKind,
+        enabled: true,
+        values: Object.fromEntries(fields.map((f) => [f.name, ""])),
+      },
+    }));
+    setExpandedApp(key);
+    setNewAppKey("");
+  };
+
   if (!isNew && loadingHost) {
     return (
       <AppShell>
@@ -242,6 +354,8 @@ export default function HostEditPage() {
       </AppShell>
     );
   }
+
+  const appCount = Object.keys(apps).length;
 
   return (
     <AppShell>
@@ -268,6 +382,9 @@ export default function HostEditPage() {
               onClick={() => setTab(t.id)}
             >
               {t.label}
+              {t.id === "apps" && appCount > 0 && (
+                <span className="tab-badge">{appCount}</span>
+              )}
             </button>
           ))}
         </div>
@@ -450,19 +567,14 @@ export default function HostEditPage() {
               {allRoles ? (
                 <div className="roles-grid">
                   {allRoles.map((role) => (
-                    <label key={role.name} className="role-item">
+                    <label key={role} className="role-item">
                       <input
                         type="checkbox"
-                        checked={selectedRoles.includes(role.name)}
-                        onChange={() => toggleRole(role.name)}
+                        checked={selectedRoles.includes(role)}
+                        onChange={() => toggleRole(role)}
                       />
                       <div>
-                        <div className="role-name">
-                          {role.display_name || role.name}
-                        </div>
-                        {role.description && (
-                          <div className="role-desc">{role.description}</div>
-                        )}
+                        <div className="role-name">{role}</div>
                       </div>
                     </label>
                   ))}
@@ -569,6 +681,122 @@ export default function HostEditPage() {
             >
               + Añadir usuario
             </button>
+          </div>
+        )}
+
+        {/* ---- APPS ---- */}
+        {tab === "apps" && (
+          <div className="form-section">
+            {Object.entries(apps).map(([key, app]) => {
+              const fields = KIND_FIELDS[app.kind] ?? [];
+              const isExpanded = expandedApp === key;
+              return (
+                <div key={key} className={`app-card${app.enabled ? "" : " app-card--disabled"}`}>
+                  <div className="app-card-header">
+                    <div className="app-card-info">
+                      <span className="app-card-key">{key}</span>
+                      <span className="app-card-kind">{app.kind}</span>
+                    </div>
+                    <div className="app-card-actions">
+                      <label className="app-toggle">
+                        <input
+                          type="checkbox"
+                          checked={app.enabled}
+                          onChange={() => toggleAppEnabled(key)}
+                        />
+                        <span>{app.enabled ? "Activa" : "Inactiva"}</span>
+                      </label>
+                      <button
+                        type="button"
+                        className="btn-icon"
+                        onClick={() =>
+                          setExpandedApp(isExpanded ? null : key)
+                        }
+                        title={isExpanded ? "Colapsar" : "Editar"}
+                      >
+                        {isExpanded ? "▲" : "▼"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-icon btn-icon--danger"
+                        onClick={() => removeApp(key)}
+                        title="Eliminar"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="app-card-body">
+                      {fields.length > 0 ? (
+                        fields.map((field) => (
+                          <div key={field.name} className="form-field">
+                            <label className="form-label">{field.label}</label>
+                            <input
+                              className="form-input"
+                              type={field.type}
+                              placeholder={field.placeholder}
+                              value={app.values[field.name] ?? ""}
+                              onChange={(e) =>
+                                updateAppValue(key, field.name, e.target.value)
+                              }
+                              autoComplete={field.type === "password" ? "new-password" : undefined}
+                            />
+                          </div>
+                        ))
+                      ) : (
+                        <p className="field-hint">
+                          Sin campos definidos para el tipo "{app.kind}".
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            <div className="add-app-form">
+              <p className="form-section-title">Añadir aplicación</p>
+              <div className="form-row">
+                <div className="form-field">
+                  <label className="form-label">Identificador (clave única)</label>
+                  <input
+                    className="form-input"
+                    value={newAppKey}
+                    onChange={(e) => setNewAppKey(e.target.value)}
+                    placeholder="wg-home"
+                  />
+                </div>
+                <div className="form-field">
+                  <label className="form-label">Tipo</label>
+                  <select
+                    className="form-select"
+                    value={newAppKind}
+                    onChange={(e) => setNewAppKind(e.target.value)}
+                  >
+                    {KNOWN_KINDS.map((k) => (
+                      <option key={k} value={k}>
+                        {k}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn-add"
+                onClick={addApp}
+                disabled={!newAppKey.trim() || !!apps[newAppKey.trim()]}
+              >
+                + Añadir aplicación
+              </button>
+              {apps[newAppKey.trim()] && (
+                <span className="field-hint field-hint--error">
+                  Ya existe una app con ese identificador.
+                </span>
+              )}
+            </div>
           </div>
         )}
 

@@ -1,39 +1,23 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  createHost,
-  updateHost,
-  deleteHost,
-  type MutationResult,
-} from "../services/hostsService";
+import { createHost, deleteHost } from "../services/hostsService";
 import type { Host } from "../features/hosts/host.types";
 
 export function useCreateHost() {
-  const qc = useQueryClient();
-  return useMutation<MutationResult, Error, Host>({
-    mutationFn: createHost,
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Host) => createHost(data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["hosts"] });
-    },
-  });
-}
-
-export function useUpdateHost(hostId: string) {
-  const qc = useQueryClient();
-  return useMutation<MutationResult, Error, Host>({
-    mutationFn: (host) => updateHost(hostId, host),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["hosts"] });
-      qc.invalidateQueries({ queryKey: ["host", hostId] });
+      queryClient.invalidateQueries({ queryKey: ["hosts"] });
     },
   });
 }
 
 export function useDeleteHost() {
-  const qc = useQueryClient();
-  return useMutation<MutationResult, Error, string>({
-    mutationFn: deleteHost,
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (hostId: string) => deleteHost(hostId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["hosts"] });
+      queryClient.invalidateQueries({ queryKey: ["hosts"] });
     },
   });
 }

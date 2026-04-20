@@ -6,4 +6,10 @@ export interface ProfileCatalogItem {
   source_file: string;
 }
 
-export type RoleName = string;
+export interface RoleInfo {
+  name: string;
+  display_name: string;
+  description: string;
+  compatible_distros: string[];
+  requires_roles: string[];
+}

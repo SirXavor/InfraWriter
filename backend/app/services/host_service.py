@@ -21,7 +21,7 @@ class HostService:
         )
 
     def _ensure_repo(self) -> None:
-        self.git.clone_if_needed(settings.git_repo_url)
+        self.git.clone_if_needed(settings.git_repo_url, token=settings.git_token)
         self.git.sync()
 
     def _get_host_file(self, primary_mac: str) -> Path:
@@ -123,12 +123,10 @@ class HostService:
 
             self._validate_unique_macs(host)
             YamlService.save_host(file_path, host)
-            self.git.commit_and_push(f"feat(hosts): add {host.name}")
+            self.git.commit_and_push(f"feat(hosts): add {host.name}", token=settings.git_token)
 
-            return {
-                "status": "created",
-                "host_id": primary_mac,
-            }
+            saved = YamlService.load_host(file_path)
+            return self._add_id(saved)
 
     def update_host(self, host_id: str, host: HostManifestModel) -> dict:
         with RepoLock():
@@ -150,7 +148,7 @@ class HostService:
                 current_file.unlink()
 
             YamlService.save_host(new_file, host)
-            self.git.commit_and_push(f"feat(hosts): update {host.name}")
+            self.git.commit_and_push(f"feat(hosts): update {host.name}", token=settings.git_token)
 
             return {
                 "status": "updated",
@@ -169,7 +167,7 @@ class HostService:
             host_name = str(existing.get("name", host_id))
 
             file_path.unlink()
-            self.git.commit_and_push(f"feat(hosts): remove {host_name}")
+            self.git.commit_and_push(f"feat(hosts): remove {host_name}", token=settings.git_token)
 
             return {
                 "status": "deleted",

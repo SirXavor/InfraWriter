@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
+import { useNavigate } from "react-router-dom";
 import type { Host } from "../../features/hosts/host.types";
 import IdentitySection from "../host-form/IdentitySection";
 import ProvisioningSection from "../host-form/ProvisioningSection";
@@ -8,65 +9,98 @@ import ApplicationsSection from "../host-form/ApplicationsSection";
 import YamlPreviewSection from "../preview/YamlPreviewSection";
 import EditorTabs from "../common/EditorTabs";
 import { useUpdateHost } from "../../hooks/useUpdateHost";
+import { useCreateHost, useDeleteHost } from "../../hooks/useHostMutations";
 import { useEditorStore } from "../../stores/editorStore";
 
 interface HostEditorProps {
   host: Host;
+  isNew?: boolean;
 }
 
-const tabs = [
-  { key: "identity", label: "Identidad" },
-  { key: "provisioning", label: "Provisioning" },
-  { key: "ansible", label: "Ansible" },
-  { key: "applications", label: "Aplicaciones" },
-  { key: "yaml", label: "YAML" },
-];
+const K8S_ROLES = ["k3s-edge", "k3s", "k8s", "kubernetes"];
 
-export default function HostEditor({ host }: HostEditorProps) {
+export default function HostEditor({ host, isNew = false }: HostEditorProps) {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("identity");
 
   const setDraft = useEditorStore((s) => s.setDraft);
   const getDraft = useEditorStore((s) => s.getDraft);
   const clearDraft = useEditorStore((s) => s.clearDraft);
 
-  const draft = host.id ? getDraft(host.id) : undefined;
+  const draftKey = isNew ? "__new__" : (host.id ?? host.hostname);
+  const draft = getDraft(draftKey);
 
   const form = useForm<Host>({
     defaultValues: draft ?? host,
   });
 
-  const {
-    register,
-    watch,
-    setValue,
-    control,
-    handleSubmit,
-    formState,
-    reset,
-  } = form;
+  const { register, watch, setValue, control, handleSubmit, formState, reset } = form;
 
   const values = watch();
-  const { mutate, isPending } = useUpdateHost(host.id!);
+  const hasK8sRole = (values.automation?.roles ?? []).some((r) => K8S_ROLES.includes(r));
 
+  const tabs = [
+    { key: "identity", label: "Identidad" },
+    { key: "provisioning", label: "Provisioning" },
+    { key: "ansible", label: "Ansible" },
+    ...(hasK8sRole ? [{ key: "applications", label: "Aplicaciones" }] : []),
+    { key: "yaml", label: "YAML" },
+  ];
+
+  const { mutate: update, isPending: isUpdating } = useUpdateHost(host.id ?? "");
+  const { mutate: create, isPending: isCreating } = useCreateHost();
+  const { mutate: remove, isPending: isDeleting } = useDeleteHost();
+  const isPending = isUpdating || isCreating || isDeleting;
+
+  // Sync name from hostname (single identifier field)
+  const hostname = watch("hostname");
   useEffect(() => {
-    reset(draft ?? host);
-  }, [draft, host, reset]);
+    setValue("name", hostname);
+  }, [hostname, setValue]);
 
+  // Restore draft or host data when host prop changes
   useEffect(() => {
-    if (!host.id) return;
+    reset(getDraft(draftKey) ?? host);
+  }, [host.id]);
 
-    if (formState.isDirty) {
-      setDraft(host.id, values);
-    } else {
-      clearDraft(host.id);
+  // Save draft on every change
+  useEffect(() => {
+    if (!formState.isDirty) return;
+    setDraft(draftKey, values);
+  }, [values, formState.isDirty, draftKey, setDraft]);
+
+  // Switch away from apps tab if k8s role removed
+  useEffect(() => {
+    if (!hasK8sRole && activeTab === "applications") {
+      setActiveTab("ansible");
     }
-  }, [values, host.id, formState.isDirty, setDraft, clearDraft]);
+  }, [hasK8sRole, activeTab]);
 
   function onSubmit(data: Host) {
-    mutate(data, {
+    if (isNew) {
+      create(data, {
+        onSuccess: (created) => {
+          clearDraft(draftKey);
+          navigate(`/hosts/${created.id ?? created.hostname}`);
+        },
+      });
+    } else {
+      update(data, {
+        onSuccess: () => {
+          clearDraft(draftKey);
+          reset(data);
+        },
+      });
+    }
+  }
+
+  function onDelete() {
+    if (!host.id) return;
+    if (!confirm(`¿Eliminar el host "${host.hostname}"?`)) return;
+    remove(host.id, {
       onSuccess: () => {
-        clearDraft(host.id!);
-        reset(data);
+        clearDraft(draftKey);
+        navigate("/");
       },
     });
   }
@@ -74,44 +108,57 @@ export default function HostEditor({ host }: HostEditorProps) {
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="host-editor">
       <header className="editor-header">
-        <h2 className="editor-title">{values.name}</h2>
-        <div className="editor-subtitle">{values.hostname}</div>
+        <h2 className="editor-title">
+          {isNew ? "Nuevo host" : (values.hostname || "—")}
+        </h2>
+        {!isNew && values.hostname !== values.name && (
+          <div className="editor-subtitle">{values.name}</div>
+        )}
       </header>
 
       <div className="editor-actions">
         <button type="submit" disabled={isPending}>
-          {isPending ? "Guardando..." : "Guardar"}
+          {isPending ? "Guardando..." : isNew ? "Crear host" : "Guardar"}
         </button>
+
+        {!isNew && (
+          <button
+            type="button"
+            className="btn-delete"
+            onClick={onDelete}
+            disabled={isPending}
+          >
+            {isDeleting ? "Eliminando..." : "Eliminar"}
+          </button>
+        )}
 
         {formState.isDirty && (
           <span className="editor-dirty">Cambios sin guardar</span>
         )}
       </div>
 
-      <EditorTabs
-        tabs={tabs}
-        activeTab={activeTab}
-        onChange={setActiveTab}
-      />
+      <EditorTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 
-      {activeTab === "identity" && <IdentitySection register={register} />}
+      {activeTab === "identity" && (
+        <IdentitySection register={register} isNew={isNew} />
+      )}
 
       {activeTab === "provisioning" && (
         <ProvisioningSection
           register={register}
           watch={watch}
           setValue={setValue}
+          isNew={isNew}
         />
       )}
 
       {activeTab === "ansible" && (
-        <AnsibleSection
-          register={register}
-          control={control}
-        />
+        <AnsibleSection register={register} control={control} />
       )}
 
-      {activeTab === "applications" && <ApplicationsSection />}
+      {activeTab === "applications" && hasK8sRole && (
+        <ApplicationsSection watch={watch} setValue={setValue} />
+      )}
 
       {activeTab === "yaml" && <YamlPreviewSection data={values} />}
     </form>

@@ -6,7 +6,6 @@ export default function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<HostsPage />} />
-      <Route path="/hosts/new" element={<HostEditPage />} />
       <Route path="/hosts/:hostId" element={<HostEditPage />} />
     </Routes>
   );

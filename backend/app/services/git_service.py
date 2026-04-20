@@ -1,6 +1,10 @@
+import logging
 from pathlib import Path
 
 from git import Repo
+from git.exc import GitCommandError
+
+logger = logging.getLogger(__name__)
 
 
 class GitService:
@@ -19,10 +23,26 @@ class GitService:
     def _get_repo(self) -> Repo:
         return Repo(self.repo_path)
 
-    def clone_if_needed(self, repo_url: str) -> None:
+    def _authenticated_url(self, url: str, token: str) -> str:
+        """Embed token into HTTPS URL without persisting it to disk."""
+        if not token:
+            return url
+        if "://" in url:
+            scheme, rest = url.split("://", 1)
+            # strip any existing credentials
+            if "@" in rest:
+                rest = rest.split("@", 1)[1]
+            return f"{scheme}://x-token:{token}@{rest}"
+        return url
+
+    def clone_if_needed(self, repo_url: str, token: str = "") -> None:
         if not (self.repo_path / ".git").exists():
             self.repo_path.parent.mkdir(parents=True, exist_ok=True)
-            Repo.clone_from(repo_url, self.repo_path, branch=self.branch)
+            auth_url = self._authenticated_url(repo_url, token)
+            Repo.clone_from(auth_url, self.repo_path, branch=self.branch)
+            # replace remote URL with unauthenticated version to avoid token on disk
+            repo = self._get_repo()
+            repo.remotes.origin.set_url(repo_url)
 
         self.configure_identity()
 
@@ -37,10 +57,13 @@ class GitService:
         origin = repo.remote(name="origin")
 
         repo.git.checkout(self.branch)
-        origin.fetch(prune=True)
-        repo.git.pull("--ff-only", "origin", self.branch)
+        try:
+            origin.fetch(prune=True)
+            repo.git.pull("--ff-only", "origin", self.branch)
+        except GitCommandError as e:
+            logger.warning("git sync failed (network issue?), using cached repo: %s", e)
 
-    def commit_and_push(self, message: str) -> None:
+    def commit_and_push(self, message: str, token: str = "") -> None:
         repo = self._get_repo()
         origin = repo.remote(name="origin")
 
@@ -50,4 +73,11 @@ class GitService:
             return
 
         repo.index.commit(message)
-        origin.push(self.branch)
+        try:
+            if token:
+                push_url = self._authenticated_url(origin.url, token)
+                repo.git.push(push_url, self.branch)
+            else:
+                origin.push(self.branch)
+        except GitCommandError as e:
+            logger.warning("git push failed (network issue?), commit kept locally: %s", e)

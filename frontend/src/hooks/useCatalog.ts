@@ -5,7 +5,7 @@ import {
   getProfilesByDistro,
   getRoles,
 } from "../services/catalogService";
-import type { Distro, ProfileCatalogItem, RoleName } from "../types/catalog";
+import type { Distro, ProfileCatalogItem, RoleInfo } from "../types/catalog";
 
 export function useDistros() {
   return useQuery<Distro[]>({
@@ -30,7 +30,7 @@ export function useProfilesByDistro(distro?: string) {
 }
 
 export function useRoles() {
-  return useQuery<RoleName[]>({
+  return useQuery<RoleInfo[]>({
     queryKey: ["catalog", "roles"],
     queryFn: getRoles,
   });

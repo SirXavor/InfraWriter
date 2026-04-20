@@ -13,49 +13,42 @@ interface ProvisioningSectionProps {
   register: UseFormRegister<Host>;
   watch: UseFormWatch<Host>;
   setValue: UseFormSetValue<Host>;
+  isNew: boolean;
 }
 
 export default function ProvisioningSection({
   register,
   watch,
   setValue,
+  isNew,
 }: ProvisioningSectionProps) {
   const selectedDistro = watch("provisioning.distro");
   const selectedProfile = watch("profile");
 
-  const {
-    data: distros = [],
-    isLoading: distrosLoading,
-  } = useDistros();
+  const { data: distros = [], isLoading: distrosLoading } = useDistros();
+  const { data: profiles = [], isLoading: profilesLoading } = useProfilesByDistro(selectedDistro);
 
-  const {
-    data: profiles = [],
-    isLoading: profilesLoading,
-  } = useProfilesByDistro(selectedDistro);
-
+  // Clear profile when distro changes and current profile is no longer valid
   useEffect(() => {
     if (!selectedDistro) return;
-
     const validProfiles = profiles.map((p) => p.name);
-
     if (selectedProfile && !validProfiles.includes(selectedProfile)) {
       setValue("profile", "");
     }
   }, [selectedDistro, selectedProfile, profiles, setValue]);
 
-  const distroOptions = distros.map((distro) => ({
-    value: distro,
-    label: distro,
-  }));
-
-  const profileOptions = profiles.map((profile) => ({
-    value: profile.name,
-    label: profile.name,
-  }));
+  const distroOptions = distros.map((d) => ({ value: d, label: d }));
+  const profileOptions = profiles.map((p) => ({ value: p.name, label: p.name }));
 
   return (
     <section className="editor-section">
       <h3 className="editor-section-title">Provisioning</h3>
+
+      {!isNew && (
+        <p className="section-warning">
+          Las opciones de provisioning no se pueden modificar en un host existente.
+        </p>
+      )}
 
       <div className="form-grid">
         <FormSelect
@@ -63,15 +56,17 @@ export default function ProvisioningSection({
           {...register("provisioning.distro")}
           options={distroOptions}
           placeholder={distrosLoading ? "Cargando distros..." : "Selecciona distro"}
+          disabled={!isNew}
         />
 
         <FormInput
           label="Versión"
           {...register("provisioning.version")}
+          disabled={!isNew}
         />
 
         <FormSelect
-          label="Perfil"
+          label="Perfil de almacenamiento"
           {...register("profile")}
           options={profileOptions}
           placeholder={
@@ -81,22 +76,19 @@ export default function ProvisioningSection({
               ? "Cargando perfiles..."
               : "Selecciona perfil"
           }
-          disabled={!selectedDistro || profilesLoading}
+          disabled={!isNew || !selectedDistro || profilesLoading}
         />
 
         <FormInput
           label="Servidor provisioning"
           {...register("provisioning.server")}
+          disabled={!isNew}
         />
 
         <FormInput
           label="Tang URL"
           {...register("provisioning.tang_url")}
-        />
-
-        <FormInput
-          label="Ubuntu ISO"
-          {...register("provisioning.ubuntu_iso")}
+          disabled={!isNew}
         />
       </div>
     </section>

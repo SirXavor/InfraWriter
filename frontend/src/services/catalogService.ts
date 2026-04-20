@@ -1,5 +1,5 @@
 import { apiClient } from "./apiClient";
-import type { Distro, ProfileCatalogItem, RoleName } from "../types/catalog";
+import type { Distro, ProfileCatalogItem, RoleInfo } from "../types/catalog";
 
 export async function getDistros(): Promise<Distro[]> {
   const response = await apiClient.get<Distro[]>("/catalog/distros");
@@ -18,7 +18,7 @@ export async function getProfilesByDistro(distro: string): Promise<ProfileCatalo
   return response.data;
 }
 
-export async function getRoles(): Promise<RoleName[]> {
-  const response = await apiClient.get<RoleName[]>("/catalog/roles");
+export async function getRoles(): Promise<RoleInfo[]> {
+  const response = await apiClient.get<RoleInfo[]>("/catalog/roles");
   return response.data;
 }

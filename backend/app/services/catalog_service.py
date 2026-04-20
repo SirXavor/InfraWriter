@@ -15,7 +15,7 @@ class CatalogService:
     def __init__(self):
         self.repo_path = Path(settings.git_repo_path)
         self.provisioning_path = self.repo_path / "configs" / "provisioning"
-        self.roles_path = self.repo_path / "roles"
+        self.roles_path = self.repo_path / "configs" / "ansible" / "roles"
         self.git = GitService(
             repo_path=settings.git_repo_path,
             branch=settings.git_branch,
@@ -24,7 +24,7 @@ class CatalogService:
         )
 
     def _ensure_repo(self) -> None:
-        self.git.clone_if_needed(settings.git_repo_url)
+        self.git.clone_if_needed(settings.git_repo_url, token=settings.git_token)
         self.git.sync()
 
     def _load_classified_docs(self) -> dict[str, list[dict]]:

@@ -17,7 +17,7 @@ interface HostEditorProps {
   isNew?: boolean;
 }
 
-const K8S_ROLES = ["k3s-edge", "k3s", "k8s", "kubernetes"];
+const K8S_ROLES = ["k3s-edge", "k3s", "k8s", "k8s-core", "kubernetes"];
 
 export default function HostEditor({ host, isNew = false }: HostEditorProps) {
   const navigate = useNavigate();
@@ -153,7 +153,7 @@ export default function HostEditor({ host, isNew = false }: HostEditorProps) {
       )}
 
       {activeTab === "ansible" && (
-        <AnsibleSection register={register} control={control} />
+        <AnsibleSection control={control} watch={watch} setValue={setValue} />
       )}
 
       {activeTab === "applications" && hasK8sRole && (

@@ -1,6 +1,7 @@
 import { useRoles } from "../../hooks/useCatalog";
 
-const REQUIRED_ROLES = ["automation"];
+// Roles that cannot coexist — selecting one deselects the others
+const K8S_EXCLUSIVE = ["k3s-edge", "k3s", "k8s", "k8s-core", "kubernetes"];
 
 interface Props {
   value: string[];
@@ -12,31 +13,30 @@ export default function RolesSelector({ value = [], onChange }: Props) {
 
   if (isLoading) return <p className="sidebar-message">Cargando roles...</p>;
 
-  const effective = Array.from(new Set([...REQUIRED_ROLES, ...value]));
-
   function toggleRole(roleName: string) {
-    if (REQUIRED_ROLES.includes(roleName)) return;
-    if (effective.includes(roleName)) {
-      onChange(effective.filter((r) => r !== roleName));
+    if (value.includes(roleName)) {
+      onChange(value.filter((r) => r !== roleName));
     } else {
-      onChange([...effective, roleName]);
+      let next = [...value];
+      if (K8S_EXCLUSIVE.includes(roleName)) {
+        next = next.filter((r) => !K8S_EXCLUSIVE.includes(r));
+      }
+      onChange([...next, roleName]);
     }
   }
 
   return (
     <div className="roles-container">
       {roles.map((role) => {
-        const selected = effective.includes(role.name);
-        const required = REQUIRED_ROLES.includes(role.name);
+        const selected = value.includes(role.name);
         return (
           <div
             key={role.name}
-            className={`role-chip ${selected ? "selected" : ""} ${required ? "required" : ""}`}
+            className={`role-chip${selected ? " selected" : ""}`}
             onClick={() => toggleRole(role.name)}
-            title={role.description || (required ? "Rol requerido" : undefined)}
+            title={role.description || undefined}
           >
             {role.display_name || role.name}
-            {required && <span className="role-required-mark"> •</span>}
           </div>
         );
       })}

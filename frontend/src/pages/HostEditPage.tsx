@@ -23,7 +23,7 @@ const BLANK_HOST: Host = {
       playbook: "playbooks/bootstrap.yaml",
       interval: "1h",
     },
-    roles: ["automation"],
+    roles: [],
     vars: {},
   },
 };
